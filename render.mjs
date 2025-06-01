@@ -66,6 +66,9 @@ export class SEMFloat extends SEMFloatBase {
 			mantissa = mantissa_64,
 			shift = BigInt(52 - this.mantissaBits);
 		if (exponent >= (1n << BigInt(this.exponentBits)) - 1n) { // inf, nan
+			if (exponent_64 < 2047n) { // inf
+				mantissa = 0n;
+			}
 			exponent = (1n << BigInt(this.exponentBits)) - 1n;
 		} else if (exponent <= 0) { // subnormal
 			if (exponent_64) {
