@@ -1,4 +1,4 @@
-import { FP128, FP16, FP256, FP32, FP64, MBFFloat, SEMFloat, TensorFloat32, X86Ext } from './render.mjs';
+import { FP16, FP32, FP64, LongSEMFloat, MBFFloat, SEMFloat, TensorFloat32, X86Ext } from './render.mjs';
 import { DOMContentLoaded, polyfill } from './util.mjs';
 
 Promise.all([DOMContentLoaded, polyfill]).then(main);
@@ -75,12 +75,12 @@ async function main() {
 			name: '80-bit (x86/x87 extended)',
 			ref: 'https://en.wikipedia.org/wiki/Extended_precision',
 		}),
-		new FP128().load({
+		new LongSEMFloat(15, 112).load({
 			key: '128',
 			name: '128-bit (quadruple)',
 			ref: 'https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format',
 		}),
-		new FP256().load({
+		new LongSEMFloat(19, 236).load({
 			key: '256',
 			name: '256-bit (octuple)',
 			ref: 'https://en.wikipedia.org/wiki/Octuple-precision_floating-point_format',

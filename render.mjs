@@ -1,4 +1,5 @@
-import { SEMFloatBase } from './abc.mjs';
+import { FLOAT, SEMFloatBase } from './abc.mjs';
+import { divTiesToEven, reduceFraction, shrTiesToEven } from './util.mjs';
 
 export class SEMFloat extends SEMFloatBase {
 	buffer8 = new BigUint64Array(1);
@@ -67,11 +68,7 @@ export class SEMFloat extends SEMFloatBase {
 			}
 			exponent = 0n;
 		}
-		if (shift > 0) {
-			const exotic = !(mantissa & ((1n << (shift - 1n)) - 1n));
-			mantissa >>= shift - 1n;
-			mantissa = (mantissa + (exotic ? mantissa & mantissa >> 1n & 1n : 1n)) >> 1n;
-		}
+		mantissa = shrTiesToEven(mantissa, shift);
 		if (mantissa >> BigInt(this.mantissaBits)) {
 			++exponent;
 			mantissa = 0n;
@@ -105,6 +102,257 @@ export class LongSEMFloat extends SEMFloatBase {
 
 	/* override */ reduce(/** @type {string} */ s) {
 		return s;
+	}
+
+	static string2Fraction(/** @type {string} */ s) {
+		const parts = s.match(FLOAT);
+		if (!parts) return null;
+
+		let num, den = 0;
+		const [, whole, fraction, exponent] = parts;
+
+		if (fraction) {
+			den = fraction.length - 1;
+			num = BigInt(whole[0] === '+' || whole[0] === '-' ? whole.substring(1) : whole) *
+				10n ** BigInt(den) + BigInt(fraction.substring(1));
+			if (whole[0] === '-') num = -num;
+		} else {
+			try {
+				num = BigInt(whole);
+			} catch { return null; }
+		}
+
+		if (exponent) {
+			let exp = Number(exponent.substring(1));
+			if (exp > 80000) exp = 80000;
+			else if (exp < -80000) exp = -80000;
+			if (exp < 0) {
+				den -= exp;
+			} else {
+				num *= 10n ** BigInt(exp);
+			}
+		}
+
+		return reduceFraction(num, den);
+	}
+
+	static fraction2Proto(/** @type {bigint} */ num, /** @type {bigint} */ den, /** @type {number} */ mantissaBits, /** @type {number?} */ useStaticLog = null) {
+		let lg = useStaticLog;
+		if (lg === null) {
+			lg = BigInt(Math.round((num.toString(16).length - den.toString(16).length) * Math.log10(16)));
+
+			const check = (lg, num, den) => lg >= 0 ? den * 10n ** lg <= num : den <= num * 10n ** -lg;
+
+			for (; check(lg, num, den); ++lg);
+			for (; !check(lg, num, den); --lg);
+		}
+
+		if (lg >= 0) {
+			den *= 10n ** lg;
+		} else {
+			num *= 10n ** -lg;
+		}
+
+		const enoughDigits = Math.ceil(mantissaBits / 3) + 1;
+		return [(num * 10n ** BigInt(enoughDigits) / den).toString(), lg];
+	}
+
+	static fraction2EM(/** @type {bigint} */ num, /** @type {bigint} */ den, /** @type {number} */ mantissaBits) {
+		// 2^exponent ≤ num/den < 2^(exponent + 1)
+		let exponent = BigInt((num.toString(16).length - den.toString(16).length) * 4);
+
+		const check = (exponent, num, den) => exponent >= 0 ? den << exponent <= num : den <= num << -exponent;
+
+		for (; check(exponent, num, den); ++exponent);
+		for (; !check(exponent, num, den); --exponent);
+
+		if (exponent >= 0) {
+			den <<= exponent;
+		} else {
+			num <<= -exponent;
+		}
+		num -= den;
+
+		console.assert(0n <= num && num < den);
+		num <<= BigInt(mantissaBits);
+
+		let mantissa = divTiesToEven(num, den);
+		if (mantissa >> BigInt(mantissaBits)) {
+			++exponent;
+			mantissa = 0n;
+		}
+
+		return [exponent, mantissa];
+	}
+
+	static EM2fraction(/** @type {bigint} */ exponent, /** @type {bigint} */ mantissa, /** @type {number} */ mantissaBits) {
+		const t = exponent - BigInt(mantissaBits), m = 1n << BigInt(mantissaBits) | mantissa;
+		return t >= 0 ? [m << t, 1n] : [m, 1n << -t];
+	}
+
+	static string2SEM(/** @type {string} */ s, /** @type {number} */ mantissaBits) {
+		s = s.trim();
+		switch (s.toUpperCase()) {
+			case 'NAN': return [0n, null, 1n << BigInt(mantissaBits - 1)];
+			case 'INF':
+			case 'INFINITY':
+			case '+INF':
+			case '+INFINITY': return [0n, null, 0n];
+			case '-INF':
+			case '-INFINITY': return [1n, null, 0n];
+		}
+
+		const ret = LongSEMFloat.string2Fraction(s);
+		if (ret === null) return null;
+
+		const [num, den] = ret, isNegative = s.startsWith('-'), sign = BigInt(isNegative);
+		if (!num) return [sign, -Infinity, 0n];
+
+		console.assert(isNegative === (num < 0));
+		return [sign, ...LongSEMFloat.fraction2EM(isNegative ? -num : num, den, mantissaBits)];
+	}
+
+	rawSEM2bits(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
+		if (exponent === -Infinity) { // zero
+			return this.composeSEM(sign, 0n, mantissa);
+		} else if (exponent == null) { // ±inf, NaN
+			return this.composeSEM(sign, (1n << BigInt(this.exponentBits)) - 1n, mantissa);
+		} else {
+			let encodedExponent = exponent - this.exponentExcess;
+			if (encodedExponent <= 0) { // subnormal
+				mantissa |= 1n << BigInt(this.mantissaBits);
+				mantissa = shrTiesToEven(mantissa, 1n - encodedExponent);
+				encodedExponent = 0n;
+			} else if (encodedExponent >= (1n << BigInt(this.exponentBits)) - 1n) { // inf
+				encodedExponent = (1n << BigInt(this.exponentBits)) - 1n;
+				mantissa = 0n;
+			}
+			return this.composeSEM(sign, encodedExponent, mantissa);
+		}
+	}
+
+	__tryScientific(/** @type {string} */ mantissa, /** @type {bigint} */ power) {
+		if (-6 <= power && power < 0) {
+			return `0.${'0'.repeat(Number(~power))}${mantissa}`;
+		} else if (0 <= power && power < 21) {
+			let len = Number(power + 1n);
+			return mantissa.length <= len ? mantissa.padEnd(len, '0') : `${mantissa.substring(0, len)}.${mantissa.substring(len)}`;
+		} else
+			return `${mantissa[0]}${mantissa.length > 1 ? '.' : ''}${mantissa.substring(1)}e${power >= 0 ? '+' : ''}${power}`;
+	}
+
+	#e(/** @type {string} */ prevString, /** @type {string} */ myString, /** @type {string} */ nextString, /** @type {bigint} */ num, /** @type {bigint} */ den, /** @type {bigint} */ lg) {
+		lg += BigInt(nextString.length - myString.length);
+		prevString = prevString.padStart(nextString.length, '0');
+		myString = myString.padStart(nextString.length, '0');
+
+		let ret;
+		for (let i = 0; ; ++i) {
+			if (prevString[i] === nextString[i]) {
+				console.assert(prevString[i] === myString[i]);
+			} else if (prevString.codePointAt(i) + 1 === nextString.codePointAt(i)) {
+				ret = nextString.substring(0, i + 1);
+				break;
+			} else {
+				// round(10^(i-lg) num/den)
+				let lgi = lg - BigInt(i);
+				ret = (lgi >= 0 ? divTiesToEven(num, den * 10n ** lgi) : divTiesToEven(num * 10n ** -lgi, den)).toString().padStart(i + 1, '0');
+				break;
+			}
+		}
+
+		for (; ret[0] === '0'; ret = ret.substring(1), --lg);
+		return this.__tryScientific(ret, lg);
+	}
+
+	/* override */ getMantissaString(/** @type {bigint} */ mantissa, subnormal = false) {
+		if (!mantissa) return subnormal ? '0' : '1';
+		const den = 1n << BigInt(this.mantissaBits), num = subnormal ? mantissa : mantissa + den;
+		let
+			[myString, lg] = LongSEMFloat.fraction2Proto(num, den, this.mantissaBits),
+			[nextString] = LongSEMFloat.fraction2Proto(num << 1n | 1n, den << 1n, this.mantissaBits, lg),
+			[prevString] = LongSEMFloat.fraction2Proto((num << 1n) - 1n, den << 1n, this.mantissaBits, lg);
+		lg += BigInt(nextString.length - myString.length);
+		prevString = prevString.padStart(nextString.length, '0');
+		myString = myString.padStart(nextString.length, '0');
+		return this.#e(prevString, myString, nextString, num, den, lg);
+	}
+
+	/* override */ getFloatString() {
+		const [sign, exponent, mantissa] = this.decomposeSEM(BigInt('0x' + this.buffer.toReversed().toHex()));
+
+		if ((exponent + 1n) >> BigInt(this.exponentBits)) // ±inf, NaN
+			return (mantissa ? NaN : sign ? -Infinity : Infinity).toString();
+
+		let num, den;
+		let num_next, den_next;
+		let num_prev, den_prev;
+		if (exponent) {
+			[num, den] = LongSEMFloat.EM2fraction(exponent + this.exponentExcess, mantissa, this.mantissaBits);
+			[num_next, den_next] = LongSEMFloat.EM2fraction(exponent + this.exponentExcess, mantissa << 1n | 1n, this.mantissaBits + 1);
+			[num_prev, den_prev] = mantissa ?
+				LongSEMFloat.EM2fraction(exponent + this.exponentExcess, (mantissa << 1n) - 1n, this.mantissaBits + 1) :
+				LongSEMFloat.EM2fraction(exponent + this.exponentExcess - 1n, (1n << BigInt(this.mantissaBits + 1)) - 1n, this.mantissaBits + 1);
+		} else { // subnormal
+			if (!mantissa) return sign ? '-0' : '0';
+			num = mantissa;
+			den = 1n << (BigInt(this.mantissaBits) - this.exponentExcess - 1n);
+			num_next = mantissa << 1n | 1n;
+			den_next = den << 1n;
+			num_prev = (mantissa << 1n) - 1n;
+			den_prev = den << 1n;
+		}
+
+		let
+			[myString, lg] = LongSEMFloat.fraction2Proto(num, den, this.mantissaBits),
+			[nextString] = LongSEMFloat.fraction2Proto(num_next, den_next, this.mantissaBits, lg),
+			[prevString] = LongSEMFloat.fraction2Proto(num_prev, den_prev, this.mantissaBits, lg);
+		return (sign ? '-' : '') + this.#e(prevString, myString, nextString, num, den, lg);
+	}
+
+	/* override */ setFromString(/** @type {string} */ s) {
+		const ret = LongSEMFloat.string2SEM(s, this.mantissaBits);
+		if (ret !== null) {
+			const b = Uint8Array.fromHex(this.rawSEM2bits(...ret).toString(16).padStart(this.buffer.length * 2, '0'));
+			this.buffer.set(b.reverse());
+		}
+	}
+
+	floatIncrementDecrement(/** @type {boolean} */ decrement) {
+		let [sign, exponent, mantissa] = this.decomposeSEM(BigInt('0x' + this.buffer.toReversed().toHex()));
+
+		if ((exponent + 1n) >> BigInt(this.exponentBits)) // ±inf, NaN
+			return;
+
+		let num, den;
+		if (exponent) {
+			[num, den] = LongSEMFloat.EM2fraction(exponent + this.exponentExcess, mantissa, this.mantissaBits);
+		} else { // subnormal
+			num = mantissa;
+			den = 1n << (BigInt(this.mantissaBits) - this.exponentExcess - 1n);
+		}
+
+		if (!sign ^ decrement) num += den;
+		else if (num >= den) num -= den;
+		else num = den - num, sign ^= 1n;
+
+		if (num) {
+			[exponent, mantissa] = LongSEMFloat.fraction2EM(num, den, this.mantissaBits);
+		} else {
+			[sign, exponent, mantissa] = [0n, -Infinity, 0n];
+		}
+		const b = Uint8Array.fromHex(
+			this.rawSEM2bits(sign, exponent, mantissa).toString(16).padStart(this.buffer.length * 2, '0')
+		);
+		this.buffer.set(b.reverse());
+	}
+
+	/* override */ floatIncrement() {
+		this.floatIncrementDecrement(false);
+	}
+
+	/* override */ floatDecrement() {
+		this.floatIncrementDecrement(true);
 	}
 }
 
@@ -269,20 +517,16 @@ export class MBFFloat extends SEMFloat {
 			exponent = exponent_64 - 1023n - this.exponentExcess,
 			mantissa = mantissa_64,
 			shift = BigInt(52 - this.mantissaBits);
-		if (exponent < 0) {
+		if (exponent < 0) { // no subnormal!
 			exponent = 0n;
 			mantissa = 0n;
 		}
-		if (shift > 0) {
-			const exotic = !(mantissa & ((1n << (shift - 1n)) - 1n));
-			mantissa >>= shift - 1n;
-			mantissa = (mantissa + (exotic ? mantissa & mantissa >> 1n & 1n : 1n)) >> 1n;
-		}
+		mantissa = shrTiesToEven(mantissa, shift);
 		if (mantissa >> BigInt(this.mantissaBits)) {
 			++exponent;
 			mantissa = 0n;
 		}
-		if (exponent >> BigInt(this.exponentBits)) {
+		if (exponent >> BigInt(this.exponentBits)) { // no inf!
 			exponent = (1n << BigInt(this.exponentBits)) - 1n;
 			mantissa = (1n << BigInt(this.mantissaBits)) - 1n;
 		}
@@ -295,7 +539,7 @@ export class MBFFloat extends SEMFloat {
 
 		this.sSign.textContent = sign ? '-1' : '+1';
 		this.iExponent.textContent = exponent + this.exponentExcess;
-		this.sFraction.textContent = exponent || mantissa ? this.reduce(this.getMantissa(mantissa, false).toString()) : '0';
+		this.sFraction.textContent = exponent || mantissa ? this.getMantissaString(mantissa, false) : '0';
 	}
 
 	/* override */ setFromString(/** @type {string} */ s) {
@@ -322,64 +566,21 @@ export class X86Ext extends LongSEMFloat {
 			}
 	}
 
+	/* override */ __tryScientific(/** @type {string} */ mantissa, /** @type {bigint} */ power) {
+		if (-6 <= power && power < 0) {
+			return `0.${'0'.repeat(Number(~power))}${mantissa}`;
+		} else if (0 <= power && power < 19) {
+			let len = Number(power + 1n);
+			return mantissa.length <= len ? mantissa.padEnd(len, '0') : `${mantissa.substring(0, len)}.${mantissa.substring(len)}`;
+		} else
+			return `${mantissa[0]}${mantissa.length > 1 ? '.' : ''}${mantissa.substring(1)}e${power >= 0 ? '+' : ''}${power}`;
+	}
+
+	/* override */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
+		return sign << 79n | exponent << 64n | BigInt(!!exponent) << 63n | mantissa;
+	}
+
 	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
 		return [binary >> 79n & 1n, binary >> 64n & 32767n, binary & 0x7fff_ffff_ffff_ffffn];
-	}
-
-	/* override */ getMantissaString(/** @type {Uint8Array} */ buffer, subnormal = false) {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ getFloatString() {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ setFromString(/** @type {string} */ s) {
-		// TODO: precisions beyond fp64
-		this.buffer.fill(0xcc);
-	}
-}
-
-export class FP128 extends LongSEMFloat {
-	constructor() {
-		super(15, 112);
-	}
-
-	/* override */ getMantissaString(/** @type {Uint8Array} */ buffer, subnormal = false) {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ getFloatString() {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ setFromString(/** @type {string} */ s) {
-		// TODO: precisions beyond fp64
-		this.buffer.fill(0xcc);
-	}
-}
-
-export class FP256 extends LongSEMFloat {
-	constructor() {
-		super(19, 236);
-	}
-
-	/* override */ getMantissaString(/** @type {Uint8Array} */ buffer, subnormal = false) {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ getFloatString() {
-		// TODO: precisions beyond fp64
-		return 'TODO';
-	}
-
-	/* override */ setFromString(/** @type {string} */ s) {
-		// TODO: precisions beyond fp64
-		this.buffer.fill(0xcc);
 	}
 }

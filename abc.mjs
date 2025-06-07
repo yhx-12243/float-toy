@@ -1,15 +1,15 @@
 /** @typedef {{ key: string, name: string, ref: string, init?: string }} LoadArgs */
 
-const
+export const
 	PI = '3.141592653589793238462643383279502884197169399375105820974944592307816406286208998628034825342117067982148086513282306647093844609550582231725359408128481117450284102701938521105559644622948954930381964428810975665933446128475648233786783165271201909145649',
-	FLOAT = /^([+-]?\d+)((?:\.\d+)?)((?:[eE][+-]?\d+)?)$/;
+	FLOAT = /^([+-]?\d*)((?:\.\d*)?)((?:[eE][+-]?\d+)?)$/;
 
 export /* abstract */ class FloatToyBase {
 	/** @type {DocumentFragment} */ static templateCached = null;
 	bits;
 	/** @type {string} */ key;
 	buffer;
-	lastRendered;
+	#lastRendered;
 	/** @type {HTMLSpanElement} */ input;
 	/** @type {HTMLInputElement} */ output;
 	/** @type {HTMLSpanElement} */ help;
@@ -24,7 +24,7 @@ export /* abstract */ class FloatToyBase {
 			throw new RangeError(`Invalid bits parameter: ${bits}. Must be a multiple of 8.`);
 		this.bits = bits;
 		this.buffer = new Uint8Array(bits / 8);
-		this.lastRendered = new Uint8Array(bits / 8);
+		this.#lastRendered = new Uint8Array(bits / 8);
 	}
 
 	static template() {
@@ -133,7 +133,7 @@ export /* abstract */ class FloatToyBase {
 	}
 
 	render(updateOutput = true, updateHex = true) {
-		if (this.lastRendered.every((x, i) => x === this.buffer[i])) return false;
+		if (this.#lastRendered.every((x, i) => x === this.buffer[i])) return false;
 
 		for (let i = 0, p = this.buffer.length - 1; i < this.bits; i += 8, --p)
 			for (let j = 0; j < 8; ++j)
@@ -151,7 +151,7 @@ export /* abstract */ class FloatToyBase {
 		}
 
 		localStorage.setItem(`float-toy-${this.key}`, hex);
-		this.lastRendered.set(this.buffer);
+		this.#lastRendered.set(this.buffer);
 		return true;
 	}
 
@@ -354,7 +354,7 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 		return newValue === oldValue;
 	}
 
-	reduce(/** @type {string} */ s) {
+	reduce(/** @type {string} */ s, customCheckFunction) {
 		const parts = s.match(FLOAT);
 		if (!parts) return s;
 
@@ -384,7 +384,7 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 				if (whole === '10' && exponent) {
 					whole = '1';
 					exponent = (Number(exponent.substring(1)) + 1).toString();
-					exponent = (exponent.startsWith('-') ? 'e' : 'e+') + exponent;
+					exponent = (exponent[0] === '-' ? 'e' : 'e+') + exponent;
 				}
 			}
 
@@ -393,12 +393,11 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 				value0 = Number(text0),
 				value1 = Number(text1),
 				diff0 = oldValue - value0,
-				diff1 = value1 - oldValue;
-
-			const [text, value] =
-				(diff0 === diff1 ? // See https://tc39.es/ecma262/#_ref_1491.
-					(parity ? [text0, value0] : [text1, value1]) :
-					(diff0 < diff1 ? [text0, value0] : [text1, value1]));
+				diff1 = value1 - oldValue,
+				[text, value] =
+					(diff0 === diff1 ? // See https://tc39.es/ecma262/#_ref_1491.
+						(parity ? [text0, value0] : [text1, value1]) :
+						(diff0 < diff1 ? [text0, value0] : [text1, value1]));
 			if (this.regardsEqual(value, oldValue)) {
 				s = text;
 				[, whole, fraction, exponent] = s.match(FLOAT);
