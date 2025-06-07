@@ -3,5 +3,5 @@ Uint8Array.fromHex ??= function (string) {
 }
 
 Uint8Array.prototype.toHex ??= function toHex() {
-  return Array.from(this, byte => byte.toString(16).padStart(2, '0')).join('')
+  return Array.from(this, byte => byte.toString(16).padStart(2, '0')).join('');
 };

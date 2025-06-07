@@ -303,6 +303,18 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 		this.exponentExcess = exponentExcess;
 	}
 
+	/* abstract */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
+		throw new Error('getMantissa() must be implemented in subclasses');
+	}
+
+	/* abstract */ getFloat() {
+		throw new Error('getFloat() must be implemented in subclasses');
+	}
+
+	/* abstract */ setFloat(/** @type {number} */ value) {
+		throw new Error('setFloat() must be implemented in subclasses');
+	}
+
 	/* override */ initGridRow2() {
 		for (let i = 0; i < this.bits; i += 8)
 			for (let j = 0; j < 8; ++j) {
@@ -326,24 +338,16 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 		this.renderHelp();
 	}
 
-	/* abstract */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
-		throw new Error('composeSEM() must be implemented in subclasses');
+	composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
+		return sign << BigInt(this.bits - 1) | exponent << BigInt(this.mantissaBits) | mantissa;
 	}
 
-	/* abstract */ decomposeSEM(/** @type {bigint} */ binary) {
-		throw new Error('decomposeSEM() must be implemented in subclasses');
-	}
-
-	/* abstract */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
-		throw new Error('getMantissa() must be implemented in subclasses');
-	}
-
-	/* abstract */ getFloat() {
-		throw new Error('getFloat() must be implemented in subclasses');
-	}
-
-	/* abstract */ setFloat(/** @type {number} */ value) {
-		throw new Error('setFloat() must be implemented in subclasses');
+	decomposeSEM(/** @type {bigint} */ binary) {
+		return [
+			binary >> BigInt(this.bits - 1) & 1n,
+			binary >> BigInt(this.mantissaBits) & ((1n << BigInt(this.exponentBits)) - 1n),
+			binary & ((1n << BigInt(this.mantissaBits)) - 1n),
+		];
 	}
 
 	regardsEqual(/** @type {number} */ newValue, /** @type {number} */ oldValue) {
@@ -377,6 +381,11 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 			} else { // integer
 				fraction = '';
 				whole = (BigInt(whole) + 1n).toString();
+				if (whole === '10' && exponent) {
+					whole = '1';
+					exponent = (Number(exponent.substring(1)) + 1).toString();
+					exponent = (exponent.startsWith('-') ? 'e' : 'e+') + exponent;
+				}
 			}
 
 			const
@@ -392,7 +401,7 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 					(diff0 < diff1 ? [text0, value0] : [text1, value1]));
 			if (this.regardsEqual(value, oldValue)) {
 				s = text;
-				fraction = s.match(FLOAT)[2];
+				[, whole, fraction, exponent] = s.match(FLOAT);
 			} else {
 				break;
 			}
@@ -408,7 +417,11 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 
 		this.sSign.textContent = sign ? '-1' : '+1';
 		this.iExponent.textContent = exponent + BigInt(isSubnormal) + this.exponentExcess;
-		this.sFraction.textContent = this.reduce(this.getMantissa(mantissa, isSubnormal).toString());
+		this.sFraction.textContent = this.getMantissaString(mantissa, isSubnormal);
+	}
+
+	getMantissaString(/** @type {bigint} */ mantissa, subnormal = false) {
+		return this.reduce(this.getMantissa(mantissa, subnormal).toString());
 	}
 
 	/* override */ getFloatString() {

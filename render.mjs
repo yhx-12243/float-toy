@@ -9,18 +9,6 @@ export class SEMFloat extends SEMFloatBase {
 		super(exponentBits, mantissaBits, exponentExcess);
 	}
 
-	/* override */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
-		return sign << BigInt(this.bits - 1) | exponent << BigInt(this.mantissaBits) | mantissa;
-	}
-
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [
-			binary >> BigInt(this.bits - 1) & 1n,
-			binary >> BigInt(this.mantissaBits) & ((1n << BigInt(this.exponentBits)) - 1n),
-			binary & ((1n << BigInt(this.mantissaBits)) - 1n),
-		];
-	}
-
 	/* override */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
 		this.buffer8[0] = 0x3ff0000000000000n | mantissa << BigInt(52 - this.mantissaBits);
 		return new Float64Array(this.buffer8.buffer)[0] - subnormal;
@@ -115,24 +103,6 @@ export class LongSEMFloat extends SEMFloatBase {
 		this.mantissaBuffer = new Uint8Array(this.buffer.length);
 	}
 
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [
-			binary >> BigInt(this.bits - 1) & 1n,
-			binary >> BigInt(this.mantissaBits) & ((1n << BigInt(this.exponentBits)) - 1n),
-			binary & ((1n << BigInt(this.mantissaBits)) - 1n),
-		];
-	}
-
-	/* override */ renderHelp() {
-		const
-			[sign, exponent, mantissa] = this.decomposeSEM(BigInt('0x' + this.buffer.toReversed().toHex())),
-			isSubnormal = !exponent;
-
-		this.sSign.textContent = sign ? '-1' : '+1';
-		this.iExponent.textContent = exponent + BigInt(isSubnormal) + this.exponentExcess;
-		this.sFraction.textContent = this.getMantissaString(this.mantissaBuffer, isSubnormal);
-	}
-
 	/* override */ reduce(/** @type {string} */ s) {
 		return s;
 	}
@@ -143,14 +113,6 @@ export class FP16 extends SEMFloatBase {
 
 	constructor() {
 		super(5, 10);
-	}
-
-	/* override */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
-		return sign << 15n | exponent << 10n | mantissa;
-	}
-
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [binary >> 15n & 1n, binary >> 10n & 31n, binary & 1023n];
 	}
 
 	/* override */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
@@ -182,14 +144,6 @@ export class FP32 extends SEMFloatBase {
 		super(8, 23);
 	}
 
-	/* override */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
-		return sign << 31n | exponent << 23n | mantissa;
-	}
-
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [binary >> 31n & 1n, binary >> 23n & 255n, binary & 0x7fffffn];
-	}
-
 	/* override */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
 		this.mantissaBuffer[0] = 0x3f800000 | Number(mantissa);
 		return new Float32Array(this.mantissaBuffer.buffer)[0] - subnormal;
@@ -217,14 +171,6 @@ export class FP64 extends SEMFloatBase {
 
 	constructor() {
 		super(11, 52);
-	}
-
-	/* override */ composeSEM(/** @type {bigint} */ sign, /** @type {bigint} */ exponent, /** @type {bigint} */ mantissa) {
-		return sign << 63n | exponent << 52n | mantissa;
-	}
-
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [binary >> 63n & 1n, binary >> 52n & 2047n, binary & 0xfffffffffffffn];
 	}
 
 	/* override */ getMantissa(/** @type {bigint} */ mantissa, subnormal = false) {
@@ -349,7 +295,7 @@ export class MBFFloat extends SEMFloat {
 
 		this.sSign.textContent = sign ? '-1' : '+1';
 		this.iExponent.textContent = exponent + this.exponentExcess;
-		this.sFraction.textContent = this.reduce(this.getMantissa(mantissa, false).toString());
+		this.sFraction.textContent = exponent || mantissa ? this.reduce(this.getMantissa(mantissa, false).toString()) : '0';
 	}
 
 	/* override */ setFromString(/** @type {string} */ s) {
@@ -376,13 +322,13 @@ export class X86Ext extends LongSEMFloat {
 			}
 	}
 
+	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
+		return [binary >> 79n & 1n, binary >> 64n & 32767n, binary & 0x7fff_ffff_ffff_ffffn];
+	}
+
 	/* override */ getMantissaString(/** @type {Uint8Array} */ buffer, subnormal = false) {
 		// TODO: precisions beyond fp64
 		return 'TODO';
-	}
-
-	/* override */ decomposeSEM(/** @type {bigint} */ binary) {
-		return [binary >> 79n & 1n, binary >> 64n & 32767n, binary & 0x7fff_ffff_ffff_ffffn];
 	}
 
 	/* override */ getFloatString() {
