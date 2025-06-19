@@ -155,6 +155,16 @@ export /* abstract */ class FloatToyBase {
 		return true;
 	}
 
+	#__load_initFromHex(/** @type {string} */ s) {
+		let b;
+		try {
+			b = Uint8Array.fromHex(s);
+		} catch {
+			return false;
+		}
+		return b.length === this.buffer.length && (this.buffer.set(b.reverse()), true);
+	}
+
 	load(/** @type {LoadArgs} */ loadArgs) {
 		const
 			template = FloatToyBase.template(),
@@ -267,18 +277,8 @@ export /* abstract */ class FloatToyBase {
 
 		document.addEventListener('mouseup', () => this.mouseDownValue = -1);
 
-		function initFromLocalStorage(/** @type {FloatToyBase} */ self) {
-			const s = localStorage.getItem(`float-toy-${self.key}`);
-			try {
-				const b = Uint8Array.fromHex(s);
-				if (b.length === self.buffer.length) {
-					self.buffer.set(b.reverse());
-					return true;
-				}
-			} catch { }
-			return false;
-		}
-		if (!initFromLocalStorage(this))
+		this.#__load_initFromHex(new URLSearchParams(location.search).get(this.key)) ||
+			this.#__load_initFromHex(localStorage.getItem(`float-toy-${this.key}`)) ||
 			this.setFromString(loadArgs.init ?? PI);
 		this.render();
 		return template;
@@ -354,7 +354,7 @@ export /* abstract */ class SEMFloatBase extends FloatToyBase {
 		return newValue === oldValue;
 	}
 
-	reduce(/** @type {string} */ s, customCheckFunction) {
+	reduce(/** @type {string} */ s) {
 		const parts = s.match(FLOAT);
 		if (!parts) return s;
 
