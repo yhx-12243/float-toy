@@ -56,6 +56,7 @@ export /* abstract */ class FloatToyBase {
 			td2.appendChild(span2);
 			td2.classList.add('zerox-col');
 			input1.classList.add('output');
+			input1.setAttribute('autocorrect', 'off')
 			td3.appendChild(input1);
 			td3.classList.add('hex-col');
 			tr1.append(td1, td2, td3);
@@ -65,6 +66,7 @@ export /* abstract */ class FloatToyBase {
 			td5.textContent = '\xa0\xa0=\xa0\xa0';
 			input2.value = '0';
 			input2.classList.add('output');
+			input2.setAttribute('autocorrect', 'off')
 			td6.appendChild(input2);
 			td6.classList.add('output-col');
 			tr2.append(td4, td5, td6);
