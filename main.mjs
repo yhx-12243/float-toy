@@ -1,7 +1,7 @@
 import { FP16, FP32, FP64, LongSEMFloat, MBFFloat, SEMFloat, TensorFloat32, X86Ext } from './render.mjs';
-import { DOMContentLoaded, polyfill } from './util.mjs';
+import { DOMContentLoaded } from './util.mjs';
 
-Promise.all([DOMContentLoaded, polyfill]).then(main);
+DOMContentLoaded.then(main);
 
 async function main() {
 	document.body.append(
